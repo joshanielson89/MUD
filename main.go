@@ -16,7 +16,7 @@ import (
 	"crypto/subtle"
 )
 
-var cmdList []Command
+var cmdMap map[string]Command
 var playerMap map[string]*Player
 var zonesMap map[int]*Zone
 var roomsMap map[int]*Room
@@ -82,8 +82,9 @@ func main() {
 
 	// call makeCommands to intialize all commands
 	fmt.Println("Installing commands")
+	cmdMap = make(map[string]Command)
 	makeCommands()
-	fmt.Printf("Intalled %d commands \n \n", len(cmdList))
+	fmt.Printf("Intalled %d commands \n \n", len(cmdMap))
 
 	from_player := make(chan fromPlayer)
 	go handleConnections(from_player)
@@ -178,12 +179,9 @@ func go1(conn net.Conn, from_player chan fromPlayer) {
 		checkHash := makeHash(password, playerMap[name].Salt)
 		realHash := playerMap[name].Hash 
 		if subtle.ConstantTimeCompare(checkHash, realHash) != 1 {
-			fmt.Println("login failed")
-			// if playerMap[name].Channel != nil {
+			fmt.Println("login failed: Invalid credentials")
 				close(player1.Channel)
 				playerMap[name].Channel = nil
-			// }
-
 		} else {
 			player1 = playerMap[name]
 			player1.Channel = to_player
@@ -394,13 +392,19 @@ func readPlayers(tx *sql.Tx, playerMap map[string]*Player) error {
 
 func dispatch(player1 *Player, userInput []string) string {
 	text := ""
-	for i, _ := range cmdList {
-		if cmdList[i].Verb == userInput[0] {
-			text = cmdList[i].Function(player1, userInput)
-			return text
-		}
+	if _, ok := cmdMap[userInput[0]]; ok { // check if command exists
+		text = cmdMap[userInput[0]].Function(player1, userInput)
+		return text
+	} else {
+		return ("Huh? \n >")
 	}
-	return ("Huh? \n >")
+	// for i, _ := range cmdList {
+	// 	if cmdList[i].Verb == userInput[0] {
+	// 		text = cmdList[i].Function(player1, userInput)
+	// 		return text
+	// 	}
+	// }
+	// return ("Huh? \n >")
 	
 }
 

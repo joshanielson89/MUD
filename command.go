@@ -9,7 +9,8 @@ func addCommand(command string, action func(player1 *Player, userInput []string)
 		Verb: command,
 		Function: action,
 	}
-	cmdList = append(cmdList, cmd)
+	// cmdList = append(cmdList, cmd)
+	cmdMap[command] = cmd
 }
 
 func makeCommands(){ // add these in order of significance
@@ -238,7 +239,7 @@ func doWhere(player1 *Player, userInput []string) string {
 	message := ""
 	for key, _ := range playerMap {
 		if playerMap[key].Location.Zone.ID == player1.Location.Zone.ID && player1.Name != playerMap[key].Name && playerMap[key].Channel != nil{ // they are in the same room
-			message += (playerMap[key].Name +  " is in Room: " + strconv.Itoa(playerMap[key].Location.ID) + " " + playerMap[key].Location.Name )
+			message += (playerMap[key].Name +  " is in Room " + strconv.Itoa(playerMap[key].Location.ID) + ": " + playerMap[key].Location.Name )
 			
 		}
 	}
