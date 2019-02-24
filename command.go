@@ -2,6 +2,7 @@ package main
 
 import (
 	"strconv"
+	"fmt"
 )
 
 func addCommand(command string, action func(player1 *Player, userInput []string) string)  {
@@ -143,6 +144,7 @@ func doDown(player1 *Player, userInput []string) string {
 
 func doLook(player1 *Player, userInput []string) string {
 	// if userInput is just "look"
+	// listPlayers()
 	text := ""
 	if len(userInput) == 1 {
 		text +=  giveStatus(player1)
@@ -255,5 +257,11 @@ func notifyInRoom(player1 *Player, message string) { // see if there are any peo
 			}
 			playerMap[key].Channel <- to_player
 		}
+	}
+}
+
+func listPlayers(){
+	for key, _ := range playerMap {
+		fmt.Println(playerMap[key])
 	}
 }

@@ -1,19 +1,21 @@
-package main 
+package main
 
 import (
-	"fmt"
 	"bufio"
+	"fmt"
+
 	// "os"
-	"strings"
-	_ "github.com/mattn/go-sqlite3"
-	"database/sql"
-	"log"
-	"net"
-	"encoding/base64"
-	"golang.org/x/crypto/pbkdf2"
 	crand "crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"database/sql"
+	"encoding/base64"
+	"log"
+	"net"
+	"strings"
+
+	_ "github.com/mattn/go-sqlite3"
+	"golang.org/x/crypto/pbkdf2"
 )
 
 var cmdMap map[string]Command
@@ -97,7 +99,7 @@ func main() {
 			if cSlice[0] == "quit" || cSlice[0] == "Quit" {
 				// close that channel
 				if event.currentPlayer.Channel != nil {
-					close(event.currentPlayer.Channel) 
+					close(event.currentPlayer.Channel)
 					event.currentPlayer.Channel = nil
 				}
 				continue
@@ -106,7 +108,7 @@ func main() {
 			response := toPlayer{
 				Text: text,
 			}
-			event.currentPlayer.Channel <- response 
+			event.currentPlayer.Channel <- response
 		} else {
 			// log the error and ignore event, and remove the player from playerList
 			fmt.Println("player channel was nil.  Event not dispatched")
@@ -117,7 +119,7 @@ func main() {
 
 func handleConnections(from_player chan fromPlayer) { // handle each new telnet connection
 	fmt.Println("Now accepting incoming connections")
-	// check for new connections and do the following code for each new connection	
+	// check for new connections and do the following code for each new connection
 	ln, err := net.Listen("tcp", ":8080")
 	if err != nil {
 		// handle error
@@ -139,51 +141,56 @@ func go1(conn net.Conn, from_player chan fromPlayer) {
 	to_player := make(chan toPlayer)
 	go go2(conn, to_player) // MUD -> PLayer
 
-// ask for username and pass
-	var name string 
+	// ask for username and pass
+	var name string
 	var password string
 	// find players name
-	fmt.Fprintf(conn, "Please enter your name: ")	
+	fmt.Fprintf(conn, "Please enter your name: ")
 	scanner := bufio.NewScanner(conn)
 	scanner.Scan()
 	userInput := string(scanner.Text())
 	if userInput != "" {
 		name = userInput
 		// fmt.Fprintf(conn, "got username")
-	} else{
+	} else {
 		fmt.Fprintf(conn, "Player entered empty username")
 	}
-	fmt.Fprintf(conn,"Password: ")
+	fmt.Fprintf(conn, "Password: ")
 	scanner.Scan()
 	userInput = string(scanner.Text())
 	if userInput != "" {
 		password = userInput
 	} else {
-		fmt.Fprintf(conn,"Player entered empty password")
+		fmt.Fprintf(conn, "Player entered empty password")
 	}
 	newSalt := makeSalt()
 	newHash := makeHash(password, newSalt)
 
-// make a new player
-	player1 := &Player {
-		Name: name, 
+	// make a new player
+	player1 := &Player{
+		Name:     name,
 		Location: roomsMap[3001],
-		Channel: to_player,
-		Salt: newSalt,
-		Hash: newHash,
+		Channel:  to_player,
+		Salt:     newSalt,
+		Hash:     newHash,
 	}
 
-// if player is already in the list, log him in
+	// if player is already in the list, log him in
 	if _, ok := playerMap[name]; ok {
 		// check username and password
 		checkHash := makeHash(password, playerMap[name].Salt)
-		realHash := playerMap[name].Hash 
+		realHash := playerMap[name].Hash
 		if subtle.ConstantTimeCompare(checkHash, realHash) != 1 {
 			fmt.Println("login failed: Invalid credentials")
-				close(player1.Channel)
-				playerMap[name].Channel = nil
+			close(to_player)
+			playerMap[name].Channel = nil
 		} else {
+			fmt.Println("Login successful: " + playerMap[name].Name + " logged in.")
 			player1 = playerMap[name]
+			if playerMap[name].Channel != nil {
+				close(playerMap[name].Channel)
+				playerMap[name].Channel = nil
+			}
 			player1.Channel = to_player
 			fmt.Fprintf(conn, "Now accepting commands: \n")
 			fmt.Fprintf(conn, giveStatus(player1))
@@ -191,18 +198,29 @@ func go1(conn net.Conn, from_player chan fromPlayer) {
 				// look for commands
 				userInput := string(scanner.Text())
 				if userInput != "" {
-					event := fromPlayer {
-					currentPlayer: player1,
-					currentCommand: userInput,
+					event := fromPlayer{
+						currentPlayer:  player1,
+						currentCommand: userInput,
 					}
 					from_player <- event
 				} else {
 					fmt.Fprintf(conn, "commands was nil \n > ")
 				}
 			}
+			if err := scanner.Err(); err != nil {
+				// this means the connection failed
+				// send a quit request to main loop
+				fmt.Println("error in scanner")
+			}
+			event := fromPlayer{
+				currentPlayer:  player1,
+				currentCommand: "quit",
+			}
+			from_player <- event
+			fmt.Println("Player was logged out")
 		}
-		
-	} else {  // otherwise create a new player and add them to the database
+
+	} else { // otherwise create a new player and add them to the database
 		// add new player to db
 		db, err := sql.Open("sqlite3", "world.db")
 		if err != nil {
@@ -216,42 +234,54 @@ func go1(conn net.Conn, from_player chan fromPlayer) {
 		if err != nil {
 			fmt.Errorf("Error adding player to db %e", err)
 		}
-		_, err = tx.Exec("INSERT INTO players(name, salt, hash) VALUES (?, ?, ?)", name, salt64, hash64,)
+		_, err = tx.Exec("INSERT INTO players(name, salt, hash) VALUES (?, ?, ?)", name, salt64, hash64)
 		if err != nil {
 			fmt.Println("hit error in Exec")
 			// log.Fatal(err)
 			tx.Rollback()
 		} else {
 			tx.Commit()
+			fmt.Println("New player created")
 			playerMap[name] = player1 // add new player to slice
 
-				fmt.Fprintf(conn, "Now accepting commands: \n")
-				fmt.Fprintf(conn, giveStatus(player1))
-				for scanner.Scan() {
-					// look for commands
-					userInput := string(scanner.Text())
-					if userInput != "" {
-						event := fromPlayer {
-						currentPlayer: player1,
+			fmt.Fprintf(conn, "Now accepting commands: \n")
+			fmt.Fprintf(conn, giveStatus(player1))
+			for scanner.Scan() {
+				// look for commands
+				userInput := string(scanner.Text())
+				if userInput != "" {
+					event := fromPlayer{
+						currentPlayer:  player1,
 						currentCommand: userInput,
-						}
-						from_player <- event
-					} else {
-						fmt.Fprintf(conn, "commands was nil \n > ")
 					}
+					from_player <- event
+				} else {
+					fmt.Fprintf(conn, "commands was nil \n > ")
 				}
+			}
+			if err := scanner.Err(); err != nil {
+				// this means the connection failed
+				// send a quit request to main loop
+				event := fromPlayer{
+					currentPlayer:  player1,
+					currentCommand: "quit",
+				}
+				from_player <- event
+			}
 		}
-		
+
 	}
-	
 }
+
 // this will handle events to all the players: MUD -> Players
 func go2(conn net.Conn, to_player chan toPlayer) {
 	// for loop processing commands from the MUD and process them here
+	defer fmt.Println("connection closed: player logged out")
 	defer conn.Close()
-	defer fmt.Println("connection closed")
-	for event := range to_player {
-		fmt.Fprintf(conn, event.Text)
+	if to_player != nil {
+		for event := range to_player {
+			fmt.Fprintf(conn, event.Text)
+		}
 	}
 }
 
@@ -265,14 +295,14 @@ func readZones(tx *sql.Tx) (map[int]*Zone, error) {
 	// for each row in rows
 	for rows.Next() {
 		var id int
-		var name string 
+		var name string
 		err = rows.Scan(&id, &name)
 		if err != nil {
 			log.Fatal(err)
 		}
 		zone := new(Zone)
 		zone.ID = id
-		zone.Name = name 
+		zone.Name = name
 		zonesMap[id] = zone
 	}
 	err = rows.Err()
@@ -286,7 +316,7 @@ func readZones(tx *sql.Tx) (map[int]*Zone, error) {
 func readRooms(tx *sql.Tx, zonesMap map[int]*Zone) (map[int]*Room, error) {
 	// use zone_id to find corresponding zone in map of zones.
 	// store that *Zone in Room object
-	var roomMap =  make(map[int]*Room) 
+	var roomMap = make(map[int]*Room)
 
 	rows, err := tx.Query("select id, zone_id, name, description from rooms")
 	if err != nil {
@@ -297,16 +327,16 @@ func readRooms(tx *sql.Tx, zonesMap map[int]*Zone) (map[int]*Room, error) {
 	for rows.Next() {
 		var id int
 		var zone_id int
-		var name string 
+		var name string
 		var description string
 		err = rows.Scan(&id, &zone_id, &name, &description)
 		if err != nil {
 			log.Fatal(err)
 		}
 		room := new(Room)
-		room.ID = id 
+		room.ID = id
 		room.Name = name
-		room.Description = description 
+		room.Description = description
 		room.Zone = zonesMap[zone_id]
 		// for k, v := range zonesMap {	 // k = maps keys, v = value of key k
 		// 	if k == id {
@@ -315,7 +345,7 @@ func readRooms(tx *sql.Tx, zonesMap map[int]*Zone) (map[int]*Room, error) {
 		// 	}
 		// }
 		roomMap[id] = room
-		
+
 	}
 	err = rows.Err()
 	if err != nil {
@@ -324,8 +354,8 @@ func readRooms(tx *sql.Tx, zonesMap map[int]*Zone) (map[int]*Room, error) {
 	return roomMap, err
 }
 
-func readExits(tx *sql.Tx, roomsMap map[int]*Room ) error {
-	directions := map[string]int {"n":0, "e":1, "w":2, "s":3, "u":4, "d":5}
+func readExits(tx *sql.Tx, roomsMap map[int]*Room) error {
+	directions := map[string]int{"n": 0, "e": 1, "w": 2, "s": 3, "u": 4, "d": 5}
 
 	rows, err := tx.Query("select from_room_id, to_room_id, direction, description from Exits")
 	if err != nil {
@@ -336,7 +366,7 @@ func readExits(tx *sql.Tx, roomsMap map[int]*Room ) error {
 	for rows.Next() {
 		var from_room int
 		var to_room int
-		var direction string 
+		var direction string
 		var description string
 		err = rows.Scan(&from_room, &to_room, &direction, &description)
 		if err != nil {
@@ -378,12 +408,12 @@ func readPlayers(tx *sql.Tx, playerMap map[string]*Player) error {
 			log.Fatal(err)
 		}
 		player1 := &Player{
-			Name: name,
+			Name:     name,
 			Location: roomsMap[3001],
-			Salt: salt64,
-			Hash: hash64,
+			Salt:     salt64,
+			Hash:     hash64,
 		}
-		//  
+		//
 
 		playerMap[name] = player1
 	}
@@ -398,14 +428,6 @@ func dispatch(player1 *Player, userInput []string) string {
 	} else {
 		return ("Huh? \n >")
 	}
-	// for i, _ := range cmdList {
-	// 	if cmdList[i].Verb == userInput[0] {
-	// 		text = cmdList[i].Function(player1, userInput)
-	// 		return text
-	// 	}
-	// }
-	// return ("Huh? \n >")
-	
 }
 
 func makeSalt() []byte {
@@ -413,12 +435,11 @@ func makeSalt() []byte {
 	_, err := crand.Read(salt)
 	if err != nil {
 		log.Fatal(err)
-	} 
+	}
 	return salt
 }
 
 func makeHash(password string, salt []byte) []byte {
-	hash := pbkdf2.Key([]byte(password), salt, 64 * 1024, 32, sha256.New) 
+	hash := pbkdf2.Key([]byte(password), salt, 64*1024, 32, sha256.New)
 	return hash
 }
-
